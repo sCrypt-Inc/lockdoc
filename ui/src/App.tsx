@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { Button, Container, Typography, Box } from '@mui/material';
+import { Button, Container, Typography, Box, FormControlLabel, Checkbox } from '@mui/material';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { enUS } from 'date-fns/locale';
 import { useNavigate } from 'react-router-dom';
@@ -11,16 +11,12 @@ import { locales } from './locales';
 import { Lockdoc } from './contracts/lockdoc';
 import { DefaultProvider, bsv, SensiletSigner, GorillapoolProvider, Addr, toByteString, WhatsonchainProvider, Provider } from 'scrypt-ts';
 import configDefault from './configDefault.json'
+import { bufferToHex, decrypt, deriveKeyFromBigInt, encrypt } from './crypto';
 
 // Worker for PDFjs
 pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
 
 const apiURL = process.env.REACT_APP_SERVER_URL || configDefault.SERVER_URL;
-
-function bufferToHex(buffer: ArrayBuffer): string {
-  const byteArray = new Uint8Array(buffer);
-  return Array.from(byteArray).map(byte => byte.toString(16).padStart(2, '0')).join('');
-}
 
 function fileToHexString(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -48,6 +44,7 @@ const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [useEncryption, setUseEncryption] = useState(false);
 
   const handleSubmit = async () => {
     // Check if file selected.
@@ -61,11 +58,9 @@ const App: React.FC = () => {
       return;
     }
 
-    // TODO: Encrypt PDF? Make optional.
-
     let provider: Provider = new GorillapoolProvider()
     let signer = new SensiletSigner(provider);
-    
+
     // TODO: Use DefaultProvider once WoC fixes CORS issue.
     const signerNetwork = await signer.getNetwork()
     if (signerNetwork == bsv.Networks.mainnet) {
@@ -94,12 +89,17 @@ const App: React.FC = () => {
 
     await instance.connect(signer)
 
-    //const deployResp = await instance.mint({
-    //  contentType: 'application/pdf',
-    //  content: await fileToHexString(file)
-    //})
+    let contentHex = await fileToHexString(file)
+
+    if (useEncryption) {
+      const bigIntKey = BigInt(`0x${(await signer.getDefaultPubKey()).toHex()}`); // Just a mock value until signer has encryption support
+      const derivedKey = await deriveKeyFromBigInt(bigIntKey);
+      const encryptedBuffer = await encrypt(derivedKey, contentHex);
+      contentHex = bufferToHex(encryptedBuffer)
+    }
+
     const contentTypeBytes = toByteString('application/pdf', true)
-    const contentBytes = toByteString(await fileToHexString(file))
+    const contentBytes = toByteString(contentHex)
     const inscr = bsv.Script.fromASM(
       `OP_FALSE OP_IF 6f7264 OP_1 ${contentTypeBytes} OP_0 ${contentBytes} OP_ENDIF`
     )
@@ -125,6 +125,10 @@ const App: React.FC = () => {
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
     console.log("Number of Pages:", numPages); // Log the number of pages
     setNumPages(numPages);
+  }
+
+  function handleCheckboxChange(event: React.ChangeEvent<HTMLInputElement>) {
+    setUseEncryption(event.target.checked);
   }
 
   // Ensure the selected time is in the future
@@ -153,6 +157,16 @@ const App: React.FC = () => {
               sx={{ marginTop: 5 }}
             />
           </LocalizationProvider>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={useEncryption}
+                onChange={handleCheckboxChange}
+                color="primary"
+              />
+            }
+            label="Use Encryption"
+          />
           <Button variant="contained" color="primary" onClick={handleSubmit} sx={{ mt: 2 }}>
             Submit
           </Button>

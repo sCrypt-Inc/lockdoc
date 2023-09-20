@@ -6,6 +6,7 @@ import { Addr, ByteString, GorillapoolProvider, MethodCallOptions, Provider, Pub
 import { Ordinal } from 'scrypt-ord';
 import { Lockdoc } from './contracts/lockdoc';
 import { format } from 'date-fns';
+import { decrypt, deriveKeyFromBigInt, hexToBuffer } from './crypto';
 
 
 // Convert hex string to Blob
@@ -41,7 +42,6 @@ const DocumentPage: React.FC = () => {
         throw new Error('vOut undefined')
       }
 
-      // TODO: Use DefaultProvider once WoC fixes CORS issue.
       let provider: Provider = new GorillapoolProvider()
       const netw = network == 'main' ? bsv.Networks.mainnet : bsv.Networks.testnet;
       if (netw == bsv.Networks.mainnet) {
@@ -50,8 +50,6 @@ const DocumentPage: React.FC = () => {
         )
       }
       await provider.connect()
-
-
       const tx = await provider.getTransaction(txid)
       const voutNum = Number(vout)
 
@@ -63,14 +61,31 @@ const DocumentPage: React.FC = () => {
       // https://github.com/sCrypt-Inc/scrypt-ord/issues/6
       // https://github.com/sCrypt-Inc/scrypt-ord/issues/7
       const scriptChunks = tx.outputs[voutNum].script.chunks
-
-      const pdfHex = scriptChunks[6].buf.toString('hex')
-      const pdfBlob = hexToBlob(pdfHex);
-      const pdfURL = URL.createObjectURL(pdfBlob);
-
       const lsHex = tx.outputs[voutNum].script.toHex()
       const inscription = Ordinal.getInsciptionScript(toByteString(lsHex))
       const lsNoIsncr = lsHex.slice(inscription.length, lsHex.length)
+
+      let pdfHex = scriptChunks[6].buf.toString('hex')
+      if (!inscription.startsWith('255044462d')) {
+        // TODO: Use some more intelligent way of checking if using encryption.
+        try {
+          const signer = new SensiletSigner(provider);
+          // Request authentication.
+          const { isAuthenticated, error } = await signer.requestAuth();
+          if (!isAuthenticated) {
+            throw new Error(`Failed to authenticate wallet.\n${error.toString()}`);
+          }
+
+          const bigIntKey = BigInt(`0x${(await signer.getDefaultPubKey()).toHex()}`); // Just a mock value until signer has encryption support
+          const derivedKey = await deriveKeyFromBigInt(bigIntKey);
+          pdfHex = await decrypt(derivedKey, hexToBuffer(pdfHex));
+        } catch (error) {
+          console.error('Failed to use signer to decrypt PDF data', error);
+        }
+      }
+
+      const pdfBlob = hexToBlob(pdfHex);
+      const pdfURL = URL.createObjectURL(pdfBlob);
 
       const instance = Lockdoc.fromLockingScript(lsNoIsncr) as Lockdoc
       instance.from = {
@@ -154,8 +169,6 @@ const DocumentPage: React.FC = () => {
     const walletPublicKey = await signer.getDefaultPubKey()
 
     // Set inscription data in order for preimage to be right.
-    const contentTypeBytes = toByteString('application/pdf', true)
-    console.log(bsv.Script.fromHex(rawInscription as string))
     contractInstance.prependNOPScript(bsv.Script.fromHex(rawInscription as string))
 
     contractInstance.bindTxBuilder('unlock',
@@ -217,59 +230,70 @@ const DocumentPage: React.FC = () => {
   };
 
   return (
-    <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" height="100vh">
-      <Typography variant="body1" gutterBottom>
-        <b>Origin:</b> <a href={originPrefix + txid}>{txid}</a>
-      </Typography>
-      {inscriptionId && (
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        height: "100vh",
+        overflowY: "auto",
+        marginTop: "30px"
+      }}
+    >
+      <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" width="100%">
         <Typography variant="body1" gutterBottom>
-          <b>Inscription:</b> <a href={'https://1satordinals.com/inscription/' + inscriptionId}>{inscriptionId}</a>
+          <b>Origin:</b> <a href={originPrefix + txid}>{txid}</a>
         </Typography>
-      )}
-      {lockTime && (
-        <Typography variant="body1" color="textPrimary">
-          <b>Locked until:</b> {format(lockTime, 'MMMM d, yyyy')}
-        </Typography>
-      )}
-      {lockTime && isSpendable(lockTime) && (
-        <Box sx={{ mt: 4, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <Typography variant="body1" color="textPrimary" sx={{ mb: 2 }}>
-            <b>Document can be unlocked!</b>
+        {inscriptionId && (
+          <Typography variant="body1" gutterBottom>
+            <b>Inscription:</b> <a href={'https://1satordinals.com/inscription/' + inscriptionId}>{inscriptionId}</a>
           </Typography>
-          <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <label>
-              Bitcoin Address:
-              <input
-                type="text"
-                value={withdrawAddress}
-                onChange={handleAddressChange}
-                placeholder="Enter Bitcoin Address"
-                style={{ marginTop: '5px', marginLeft: '5px' }}
-              />
-            </label>
-            <button type="submit">Withdraw</button>
-          </form>
-        </Box>
-      )}
-      {pdfURL && (
-        <Box sx={{ mt: 4, width: '100%' }}>
-          <Typography variant="h6">PDF Preview</Typography>
-          <Box sx={{ height: 500, overflowY: 'auto', width: '100%' }}>
-            <Document file={pdfURL} onLoadSuccess={onDocumentLoadSuccess}>
-              {Array.from(new Array(numPages), (el, index) => (
-                <Page
-                  renderTextLayer={false}
-                  renderAnnotationLayer={false}
-                  key={`page_${index + 1}`} pageNumber={index + 1}
+        )}
+        {lockTime && (
+          <Typography variant="body1" color="textPrimary">
+            <b>Locked until:</b> {format(lockTime, 'MMMM d, yyyy')}
+          </Typography>
+        )}
+        {lockTime && isSpendable(lockTime) && ( // TODO: Check if already spent.
+          <Box sx={{ mt: 4, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <Typography variant="body1" color="textPrimary" sx={{ mb: 2 }}>
+              <b>Document can be unlocked!</b>
+            </Typography>
+            <form onSubmit={handleWithdraw} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <label>
+                Bitcoin Address:
+                <input
+                  type="text"
+                  value={withdrawAddress}
+                  onChange={handleAddressChange}
+                  placeholder="Enter Bitcoin Address"
+                  style={{ marginTop: '5px', marginLeft: '5px' }}
                 />
-              ))}
-            </Document>
+              </label>
+              <button type="submit">Withdraw</button>
+            </form>
           </Box>
-        </Box>
-      )}
-      <Button component={Link} to="/" variant="contained" color="primary">
-        Go Back
-      </Button>
+        )}
+        {pdfURL && (
+          <Box sx={{ mt: 4, width: '100%' }}>
+            <Typography variant="h6">PDF Preview</Typography>
+            <Box sx={{ height: 500, overflowY: 'auto', width: '100%' }}>
+              <Document file={pdfURL} onLoadSuccess={onDocumentLoadSuccess}>
+                {Array.from(new Array(numPages), (el, index) => (
+                  <Page
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                    key={`page_${index + 1}`} pageNumber={index + 1}
+                  />
+                ))}
+              </Document>
+            </Box>
+          </Box>
+        )}
+        <Button component={Link} to="/" variant="contained" color="primary">
+          Go Back
+        </Button>
+      </Box>
     </Box>
   );
 }
