@@ -7,6 +7,8 @@ import {
     PubKey,
     Sig,
     pubKey2Addr,
+    SigHash,
+    SigHashType,
 } from 'scrypt-ts'
 
 export class Lockdoc extends OneSatNFT {
@@ -38,6 +40,7 @@ export class Lockdoc extends OneSatNFT {
         
         // Check address and verify signature.
         assert(pubKey2Addr(pubKey) == this.recipient, 'pub key does not belong to address')
+        console.log(this.ctx)
         assert(this.checkSig(sig, pubKey), 'signature check failed')
     }
 

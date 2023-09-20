@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom';
 //import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import { locales } from './locales';
 import { Lockdoc } from './contracts/lockdoc';
-import { DefaultProvider, bsv, SensiletSigner, GorillapoolProvider, Addr, toByteString, WhatsonchainProvider } from 'scrypt-ts';
+import { DefaultProvider, bsv, SensiletSigner, GorillapoolProvider, Addr, toByteString, WhatsonchainProvider, Provider } from 'scrypt-ts';
 import configDefault from './configDefault.json'
 
 // Worker for PDFjs
@@ -63,8 +63,20 @@ const App: React.FC = () => {
 
     // TODO: Encrypt PDF? Make optional.
 
-    const provider = new WhatsonchainProvider(bsv.Networks.testnet)
-    const signer = new SensiletSigner(provider);
+    let provider: Provider = new GorillapoolProvider()
+    let signer = new SensiletSigner(provider);
+    
+    // TODO: Use DefaultProvider once WoC fixes CORS issue.
+    const signerNetwork = await signer.getNetwork()
+    if (signerNetwork == bsv.Networks.mainnet) {
+      provider = new WhatsonchainProvider(
+        bsv.Networks.mainnet
+      )
+    } else {
+      provider = new GorillapoolProvider()
+    }
+
+    signer = new SensiletSigner(provider);
 
     // Request authentication.
     const { isAuthenticated, error } = await signer.requestAuth();
@@ -97,7 +109,7 @@ const App: React.FC = () => {
 
     console.log('Deployment successful: ', deployResp.id)
 
-    const networkStr = (await signer.getNetwork()) == bsv.Networks.mainnet ? 'main' : 'test'
+    const networkStr = signerNetwork == bsv.Networks.mainnet ? 'main' : 'test'
     setTimeout(() => {
       navigate(`/${networkStr}/${deployResp.id}/0`);
     }, 1000);
