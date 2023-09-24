@@ -9,6 +9,10 @@ import { format } from 'date-fns';
 import { decrypt, deriveKeyFromBigInt, hexToBuffer } from './crypto';
 
 
+// Margin for locktime to pass to avoid unlocking tx to be marked as non-final.
+const LOCKTIME_MARGIN = 10000;
+
+
 // Convert hex string to Blob
 function hexToBlob(hex: string): Blob {
   const len = hex.length;
@@ -32,6 +36,14 @@ const DocumentPage: React.FC = () => {
   const [withdrawAddress, setWithdrawAddress] = useState<string>('');
   const [originPrefix, setOriginPrefix] = useState<string>('');
   const [inscriptionId, setInscriptionId] = useState<number | null>(null);
+  const [showNotification, setShowNotification] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState('');
+
+  // 2. Create a function to close the notification box
+  const closeNotification = () => {
+    setShowNotification(false);
+    setNotificationMessage('');
+  }
 
   useEffect(() => {
     const onPageLoad = async () => {
@@ -52,8 +64,6 @@ const DocumentPage: React.FC = () => {
       await provider.connect()
       const tx = await provider.getTransaction(txid)
       const voutNum = Number(vout)
-
-      // const inscrScript = Ordinal.getInsciptionScript(toByteString(tx.outputs[voutNum].script.toHex()))
 
       // TODO: Check MIME type
 
@@ -109,6 +119,8 @@ const DocumentPage: React.FC = () => {
       } catch (error) {
         console.error('Error fetching ordinal metadata:', error);
       }
+      
+      console.log(instance.utxo)
 
       setPdfURL(pdfURL)
       setLockTime(new Date(Number(instance.locktime) * 1000))
@@ -126,7 +138,8 @@ const DocumentPage: React.FC = () => {
 
   function isSpendable(locktime: Date): boolean {
     const now = new Date();
-    return locktime <= now;
+    const extendedLocktime = new Date(locktime.getTime() + LOCKTIME_MARGIN * 1000);
+    return extendedLocktime <= now;
   }
 
   const handleAddressChange = (e: ChangeEvent<HTMLInputElement>): void => {
@@ -174,9 +187,7 @@ const DocumentPage: React.FC = () => {
     contractInstance.bindTxBuilder('unlock',
       async (
         current: Lockdoc,
-        options: MethodCallOptions<Lockdoc>,
-        recipient: PubKey,
-        sig: Sig
+        options: MethodCallOptions<Lockdoc>
       ) => {
         const unsignedTx: bsv.Transaction = new bsv.Transaction()
           // add contract input
@@ -213,7 +224,7 @@ const DocumentPage: React.FC = () => {
       PubKey(walletPublicKey.toByteString()),
       (sigResps) => findSig(sigResps, walletPublicKey),
       {
-        lockTime: Math.floor(Date.now() / 1000),
+        lockTime: Math.floor(Date.now() / 1000) - LOCKTIME_MARGIN,
         pubKeyOrAddrToSign: {
           pubKeyOrAddr: walletPublicKey,
         },
@@ -221,12 +232,9 @@ const DocumentPage: React.FC = () => {
       } as MethodCallOptions<Lockdoc>
     )
 
-    await provider.sendTransaction(callRes.tx)
-
-    console.log(callRes.tx.id)
-
-    // Your logic to handle withdrawal. For now, just an alert.
-    alert(`Withdrawing to address: ${withdrawAddress}`);
+    console.log('Unlock successfully called: ', callRes.tx.id)
+    setNotificationMessage(`Successfully withdrawn to address ${withdrawAddress}.\nTXID: ${callRes.tx.id}`);
+    setShowNotification(true);
   };
 
   return (
@@ -240,6 +248,14 @@ const DocumentPage: React.FC = () => {
         marginTop: "30px"
       }}
     >
+      {showNotification && (
+        <Box sx={{ width: '100%', backgroundColor: 'lightgreen', padding: '10px', marginBottom: '10px' }}>
+          <Typography variant="body1">
+            {notificationMessage}
+            <Button onClick={closeNotification} sx={{ float: 'right' }}>Close</Button>
+          </Typography>
+        </Box>
+      )}
       <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" width="100%">
         <Typography variant="body1" gutterBottom>
           <b>Origin:</b> <a href={originPrefix + txid}>{txid}</a>
@@ -254,7 +270,7 @@ const DocumentPage: React.FC = () => {
             <b>Locked until:</b> {format(lockTime, 'MMMM d, yyyy')}
           </Typography>
         )}
-        {lockTime && isSpendable(lockTime) && ( // TODO: Check if already spent.
+        {lockTime && isSpendable(lockTime) && (
           <Box sx={{ mt: 4, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <Typography variant="body1" color="textPrimary" sx={{ mb: 2 }}>
               <b>Document can be unlocked!</b>

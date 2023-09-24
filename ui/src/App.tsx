@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom';
 //import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import { locales } from './locales';
 import { Lockdoc } from './contracts/lockdoc';
-import { DefaultProvider, bsv, SensiletSigner, GorillapoolProvider, Addr, toByteString, WhatsonchainProvider, Provider } from 'scrypt-ts';
+import { DefaultProvider, bsv, SensiletSigner, GorillapoolProvider, Addr, toByteString, WhatsonchainProvider, Provider, TaalProvider } from 'scrypt-ts';
 import configDefault from './configDefault.json'
 import { bufferToHex, decrypt, deriveKeyFromBigInt, encrypt } from './crypto';
 
@@ -81,7 +81,7 @@ const App: React.FC = () => {
     }
 
     const walletAddr = await signer.getDefaultAddress()
-
+    
     const instance = new Lockdoc(
       Addr(walletAddr.toByteString()),
       BigInt(Math.floor(selectedDate.getTime() / 1000))
@@ -145,7 +145,7 @@ const App: React.FC = () => {
   return (
     <Container component="main" maxWidth="md">
       <Box sx={{ mt: 8, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <Typography variant="h5" gutterBottom>Upload PDF File</Typography>
+        <Typography variant="h5" gutterBottom>Inscribe and Lock PDF File</Typography>
 
         <Box component="form" sx={{ width: '100%', mt: 2, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <input type="file" accept=".pdf" onChange={onFileChange} />
@@ -153,7 +153,7 @@ const App: React.FC = () => {
             <DatePicker
               label="Pick lock deadline"
               value={selectedDate}
-              onChange={(newValue) => isFutureTime(newValue) && setSelectedDate(newValue)}
+              onChange={(newValue) => setSelectedDate(newValue)}
               sx={{ marginTop: 5 }}
             />
           </LocalizationProvider>
